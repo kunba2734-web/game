@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>随机碰撞竞技场 · 双角色自动对战</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{
+    background:#0d1b24;color:#e9f6fb;
+    font-family:"Microsoft YaHei","PingFang SC","Hiragino Sans GB",sans-serif;
+    display:flex;flex-direction:column;align-items:center;gap:12px;
+    padding:14px 12px 24px;
+  }
+  #stage{position:relative;line-height:0}
+  canvas#game{
+    width:min(86vh,860px,96vw);height:auto;border-radius:14px;
+    box-shadow:0 18px 50px rgba(0,0,0,.55);background:#20a3d8;display:block;
+  }
+
+  /* ---------- 全屏界面：完全遮住擂台 ---------- */
+  .screen{
+    position:absolute;inset:0;display:none;flex-direction:column;
+    align-items:center;justify-content:center;gap:16px;line-height:1.45;
+    border-radius:14px;padding:26px;text-align:center;overflow:hidden;
+    background:radial-gradient(125% 95% at 50% 0%, #3cc2ec 0%, #1e9ecd 36%, #0f7099 68%, #08455f 100%);
+  }
+  .screen::before{
+    content:'';position:absolute;inset:0;pointer-events:none;
+    background:repeating-linear-gradient(135deg, rgba(255,255,255,.055) 0 22px, rgba(255,255,255,0) 22px 46px);
+  }
+  .screen::after{
+    content:'';position:absolute;left:50%;top:-18%;width:120%;height:70%;
+    transform:translateX(-50%);pointer-events:none;
+    background:radial-gradient(50% 50% at 50% 50%, rgba(255,255,255,.22), rgba(255,255,255,0) 70%);
+  }
+  .screen > *{position:relative;z-index:1}
+  .screen.show{display:flex}
+
+  /* 加载页 */
+  #screen-loading .loader{display:flex;flex-direction:column;align-items:center;gap:16px}
+  .spinner{
+    width:54px;height:54px;border-radius:50%;
+    border:5px solid rgba(255,255,255,.28);border-top-color:#fff;
+    animation:spin .9s linear infinite;
+  }
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .loadbar{width:220px;height:8px;border-radius:5px;background:rgba(255,255,255,.25);overflow:hidden}
+  .loadbar > i{display:block;height:100%;width:0;background:#fff;border-radius:5px;transition:width .2s}
+  #screen-loading p{margin:0;font-size:13px;letter-spacing:.14em;opacity:.82}
+  /* 主界面 */
+  #screen-menu .logo h1{
+    margin:0;font-size:clamp(26px,4.6vw,48px);letter-spacing:.06em;color:#fff;
+    text-shadow:0 4px 0 rgba(0,0,0,.30),0 0 26px rgba(0,0,0,.35);
+  }
+  #screen-menu .logo p{margin:9px 0 0;font-size:clamp(12px,1.6vw,15px);opacity:.82;letter-spacing:.14em}
+
+  #screen-menu .ver{font-size:12px;opacity:.62;margin:2px 0 0;letter-spacing:.1em}
+
+  /* 选人 */
+  #screen-select{gap:12px}
+  #screen-select h2{margin:0;font-size:clamp(16px,2.4vw,22px);letter-spacing:.1em}
+  .slots{display:flex;align-items:center;gap:12px}
+  .slot{
+    display:flex;flex-direction:column;align-items:center;gap:1px;min-width:108px;
+    padding:6px 14px 7px;border-radius:12px;cursor:pointer;transition:.12s;
+    background:rgba(255,255,255,.12);border:2px solid rgba(255,255,255,.22);
+  }
+  .slot:hover{background:rgba(255,255,255,.18)}
+  .slot.active{border-color:#ffd27f;background:rgba(255,210,127,.2)}
+  .slot canvas{width:52px;height:52px;display:block}
+  .slot .tag{font-size:9.5px;opacity:.7;letter-spacing:.18em}
+  .slot b{font-size:16px}
+  .vs{font-weight:800;font-size:20px;opacity:.66;letter-spacing:.1em}
+  .hint{font-size:11.5px;opacity:.62;margin:-4px 0 0}
+
+  .roster{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:9px;width:min(100%,820px)}
+  .card{
+    display:flex;flex-direction:column;align-items:center;gap:1px;
+    padding:7px 5px 9px;border-radius:14px;cursor:pointer;font-family:inherit;
+    background:rgba(255,255,255,.1);border:2px solid rgba(255,255,255,.2);
+    color:#eef9ff;transition:.12s;
+  }
+  .card:hover{background:rgba(255,255,255,.2);transform:translateY(-2px)}
+  .card canvas{width:72px;height:72px;display:block}
+  .card b{font-size:14.5px;font-weight:800}
+  .card .sk{font-size:10px;opacity:.72;text-align:center;line-height:1.4}
+  .card.pick-a{border-color:#8ad8ff;background:rgba(138,216,255,.22)}
+  .card.pick-b{border-color:#ff9a8a;background:rgba(255,154,138,.22)}
+
+  .actions{display:flex;gap:8px;align-items:center}
+
+  /* 结算（保留透出战场） */
+  .banner{
+    position:absolute;inset:0;display:none;flex-direction:column;overflow:hidden;
+    align-items:center;justify-content:center;gap:14px;line-height:1.4;
+    border-radius:14px;
+    background:radial-gradient(125% 95% at 50% 0%, #3cc2ec 0%, #1e9ecd 36%, #0f7099 68%, #08455f 100%);
+  }
+  .banner::before{
+    content:'';position:absolute;inset:0;pointer-events:none;
+    background:repeating-linear-gradient(135deg, rgba(255,255,255,.055) 0 22px, rgba(255,255,255,0) 22px 46px);
+  }
+  .banner > *{position:relative;z-index:1}
+  .banner.show{display:flex}
+  .banner h2{margin:0;font-size:clamp(24px,5vw,48px);color:#fff;letter-spacing:.06em;
+    text-shadow:0 4px 0 rgba(0,0,0,.35),0 0 24px rgba(0,0,0,.35)}
+  .banner p{margin:0;font-size:14px;opacity:.9}
+
+  /* 底部条：只在战斗时出现 */
+  .bar{display:none;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center;width:min(86vh,860px,96vw)}
+  body.in-battle .bar{display:flex}
+  body.result .bar{display:none}
+  .grp{display:flex;gap:6px;align-items:center;background:#13232e;border-radius:10px;padding:6px 8px}
+
+  button{
+    font-family:inherit;font-size:14px;font-weight:700;color:#cfe9f3;
+    background:#1b3240;border:1px solid #2b4a5c;padding:9px 16px;border-radius:8px;
+    cursor:pointer;transition:.12s;
+  }
+  button:hover{background:#25455a;color:#fff}
+  button.active{background:#e9f6fb;color:#0f2b3a;border-color:#e9f6fb}
+  .primary{background:#e5453f;border-color:#e5453f;color:#fff}
+  .primary:hover{background:#f2564f}
+  .big{font-size:17px;padding:13px 42px;border-radius:11px;letter-spacing:.14em}
+  .lbl{font-size:12px;opacity:.6;padding:0 4px;letter-spacing:.1em}
+
+  .tip{font-size:12px;opacity:.5;max-width:min(86vh,860px,96vw);text-align:center;line-height:1.7}
+  code{background:#1b3240;border:1px solid #2b4a5c;border-radius:4px;padding:1px 5px;font-size:11px}
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <canvas id="game" width="1080" height="1080"></canvas>
+
+  <!-- ============ 加载页 ============ -->
+  <div class="screen show" id="screen-loading">
+    <div class="loader">
+      <div class="spinner"></div>
+      <p>正在加载贴图…</p>
+      <div class="loadbar"><i id="loadBar"></i></div>
+    </div>
+  </div>
+  <!-- ============ 主界面 ============ -->
+  <div class="screen" id="screen-menu">
+    <div class="logo">
+      <h1>随机碰撞竞技场</h1>
+      <p>双角色自动对战 · 技能互殴 · 血条见底定胜负</p>
+    </div>
+
+    <button class="primary big" id="btnStart">开 始 对 战</button>
+    <p class="ver">4 位角色 · 8 种技能 · 随机碰撞物理</p>
+  </div>
+
+  <!-- ============ 选人界面 ============ -->
+  <div class="screen" id="screen-select">
+    <h2>选择出战角色</h2>
+    <div class="slots">
+      <div class="slot active" id="slotA">
+        <canvas width="160" height="160"></canvas>
+        <span class="tag">蓝 方</span><b id="slotAName">凑企鹅</b>
+      </div>
+      <div class="vs">VS</div>
+      <div class="slot" id="slotB">
+        <canvas width="160" height="160"></canvas>
+        <span class="tag">红 方</span><b id="slotBName">兔兔</b>
+      </div>
+    </div>
+    <p class="hint">点角色卡放入高亮槽位，点另一个槽位可以换边</p>
+    <div class="roster" id="roster"></div>
+    <div class="actions">
+      <button id="btnBackMenu">返回</button>
+      <button id="btnRand">随机</button>
+      <button class="primary" id="btnFight">开 战</button>
+    </div>
+  </div>
+
+  <!-- ============ 结算 ============ -->
+  <div class="banner" id="banner">
+    <h2 id="bannerText">凑企鹅获胜</h2>
+    <p id="bannerSub"></p>
+    <div class="actions">
+      <button class="primary" id="againBtn">再来一局</button>
+      <button id="btnChange">换角色</button>
+      <button id="btnHome">主界面</button>
+    </div>
+  </div>
+</div>
+
+<div class="bar">
+  <div class="grp">
+    <span class="lbl">速度</span>
+    <button data-speed="1" class="active">1×</button>
+    <button data-speed="2">2×</button>
+    <button data-speed="4">4×</button>
+  </div>
+  <button id="restartTop">重开</button>
+</div>
+
+<div class="tip">
+  角色在墙内匀速乱撞，遇墙随机反弹；互相撞到会弹开并掉血 —— 这是一场<b>自动对战</b>，你只需要看戏，或用 2×/4× 快进。
+  <br>加角色：写一个 <code>drawXXX()</code> + 在 <code>CHARS</code> 里加一条；加技能：在 <code>SKILLS</code> 里加一条效果，挂到角色的 <code>skills</code> 上。
+</div>
+
+<script src="game.js"></script>
+</body>
+</html>
