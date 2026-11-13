@@ -1,4 +1,4 @@
-# 随机碰撞竞技场 · Rival Arena
+﻿# 随机碰撞竞技场 · Rival Arena
 
 两个角色在矩形擂台里随机碰撞、遇墙反弹，各自自动放技能互相攻击，头顶血条见底定胜负。
 
@@ -55,6 +55,10 @@ python -m http.server 8000
 
 > 仓库根目录的 `.nojekyll` 用来跳过 Jekyll 处理，保证静态文件原样发布。
 
+## 手机 / 平板
+
+页面做了移动端适配：窄屏时全屏界面铺满视口、角色卡自动两列、画布按宽度等比缩放，横竖屏都能玩。
+
 ## 技术要点
 
 - **固定步长 1/60 模拟**：渲染用 `requestAnimationFrame`，逻辑用累加器补步，2×/4× 加速不会改变战斗结果
@@ -70,12 +74,13 @@ python -m http.server 8000
 .
 ├── index.html            # 页面外壳：加载页 / 主界面 / 选人 / 结算
 ├── game.js               # 全部游戏逻辑：实体、技能表、角色表、世界循环
-├── assets/
-│   ├── gatling-pea.png   # 角色贴图
-│   └── pea.png           # 子弹贴图
+├── sprites.js            # 自动生成：贴图内联成 data URI（移动端不依赖图片请求）
+├── assets/               # 原始 PNG（构建时会被内联进 sprites.js）
 ├── screenshots/          # README 用截图
 └── .nojekyll
 ```
+
+> `sprites.js` 由 `build.ps1` 从 `assets/` 生成。贴图内联后，手机浏览器不会再因为图片请求失败/缓存而显示占位图。
 
 ## 说明
 
