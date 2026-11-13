@@ -1094,11 +1094,6 @@
   }
   function drawHeader(g, w) {
     g.save();
-    g.fillStyle = 'rgba(255,255,255,.85)';
-    g.font = '600 24px "Microsoft YaHei",sans-serif';
-    g.textAlign = 'left';
-    g.fillText('随机碰撞竞技场 · 框架原型', 60, 84);
-
     g.textAlign = 'center';
     g.fillStyle = COLOR.ink;
     const title = (w.a ? w.a.name : '') + ' vs ' + (w.b ? w.b.name : '');
