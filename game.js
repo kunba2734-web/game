@@ -1684,6 +1684,7 @@
   let screen = 'menu';            // menu | select | battle
   let world = null;
   let speedMul = 1, acc = 0, last = 0;
+  let resultAt = 0;          // 分出胜负后的真实时间戳（用于延迟弹结算）
 
   // ---------- 界面切换 ----------
   function showScreen(name) {
@@ -1810,6 +1811,7 @@
   function startBattle() {
     world = new World((Math.random() * 1e9) | 0, selection.a, selection.b);
     acc = 0; last = 0;
+    resultAt = 0;
     showScreen('battle');
   }
 
@@ -1839,7 +1841,11 @@
       }
       if (steps === CFG.maxSteps) acc = 0;
       world.render(ctx);
-      if (world.over && !banner.classList.contains('show')) showResult();
+      if (world.over) {
+        if (!resultAt) resultAt = performance.now();
+        // 等最后一击的表现演完（飘字、爆点、慢动作）再弹结算
+        if (!banner.classList.contains('show') && performance.now() - resultAt > 1300) showResult();
+      }
     } else {
       ctx.clearRect(0, 0, CFG.W, CFG.H);
     }
