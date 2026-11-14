@@ -331,7 +331,7 @@
     knockback(nx, ny, power) {
       this.vx = nx * power;
       this.vy = ny * power;
-      this.knock = 0.32;
+      this.knock = 0.5;
     }
 
     heal(amount) {
@@ -633,23 +633,24 @@
       g.translate(this.x, this.y);
       g.scale(this.dir, 1);
 
-      // 扇形范围提示
+      // 扇形范围提示（半径 = 实际攻击半径）
       g.globalAlpha = 0.22 * (1 - k);
       g.fillStyle = '#ffd94a';
-      g.beginPath(); g.moveTo(0, 0); g.arc(0, 0, 200, -0.95, 0.95); g.closePath(); g.fill();
+      g.beginPath(); g.moveTo(0, 0); g.arc(0, 0, 410, -0.95, 0.95); g.closePath(); g.fill();
 
       // 挥拍残影
       g.globalAlpha = (1 - k) * 0.9;
       g.strokeStyle = '#ffffff';
-      g.lineWidth = 9;
+      g.lineWidth = 16;
       g.lineCap = 'round';
-      g.beginPath(); g.arc(0, 0, 118, -0.95, to); g.stroke();
+      g.beginPath(); g.arc(0, 0, 300, -0.95, to); g.stroke();
 
       // 球拍
       g.globalAlpha = 1 - k * 0.6;
       g.save();
       g.rotate(to);
-      g.translate(118, 0);
+      g.translate(300, 0);
+      g.scale(1.9, 1.9);
       g.rotate(-0.35);
       g.strokeStyle = '#1b2a3a';
       g.lineWidth = 7;
@@ -894,8 +895,8 @@
     },    // 网球拍挥击：正面扇形近战，能反弹对手子弹，命中击退
     racket: {
       name: '挥拍', color: '#ffd94a', cd: 2.3,
-      canCast: (f, foe) => dist(f, foe) < 320,
-      urge: (f, foe) => (dist(f, foe) < 250 ? 0.95 : 0.3),
+      canCast: (f, foe) => dist(f, foe) < 640,
+      urge: (f, foe) => (dist(f, foe) < 480 ? 0.95 : 0.3),
       cast(f, foe, w) {
         const aim = Math.atan2(foe.y - f.y, foe.x - f.x);
         const dir = Math.cos(aim) >= 0 ? 1 : -1;
@@ -908,7 +909,7 @@
           if (e === f || e.owner === f) continue;
           if (typeof e.dmg !== 'number' || typeof e.vx !== 'number') continue;
           const d = dist(e, f);
-          if (d > 235) continue;
+          if (d > 410) continue;
           let da = Math.atan2(e.y - f.y, e.x - f.x) - aim;
           while (da > Math.PI) da -= TAU;
           while (da < -Math.PI) da += TAU;
@@ -918,18 +919,18 @@
           e.vx = Math.cos(back) * sp;
           e.vy = Math.sin(back) * sp;
           e.owner = f;
-          e.dmg = Math.round(e.dmg * 1.2);
+          e.dmg = Math.round(e.dmg * 1.5);
           reflected++;
           w.burst(e.x, e.y, '#ffe066', 6);
         }
 
         // ② 近战命中 + 击退
         const d2 = dist(f, foe);
-        if (d2 < 205) {
-          foe.takeDamage(52, 'attack');
+        if (d2 < 410) {
+          foe.takeDamage(96, 'attack');
           const nx = (foe.x - f.x) / (d2 || 1);
           const ny = (foe.y - f.y) / (d2 || 1);
-          foe.knockback(nx, ny, 900);
+          foe.knockback(nx, ny, 1900);
           w.shake = Math.min(16, w.shake + 7);
         }
         if (reflected > 0) w.popText(f.x, f.y - 150, '反弹 ×' + reflected, '#ffe066', 26);
