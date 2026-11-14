@@ -174,6 +174,9 @@
 
       // 被击退：短时间保持高速度，结束后恢复正常速度
       this.knock = 0;
+      this.stun = 0;          // 眩晕剩余时间（撞墙触发）
+      this.deflectCd = 0;     // 自动弹反的短冷却
+      this.autoDeflect = this.skills.some(function (s) { return s.key === 'racket'; });
 
       // 大招（机枪豌豆专用）：剩余时间 / 开火累加器 / 开火间隔
       this.ult = 0;
@@ -194,6 +197,23 @@
       this.hitFlash = Math.max(0, this.hitFlash - dt * 3);
       this.ammo.cur = Math.min(this.ammo.max, this.ammo.cur + this.ammo.regen * dt);
 
+      // —— 眩晕：不能移动、不能放技能 ——
+      if (this.stun > 0) {
+        this.stun -= dt;
+        this.vx *= 0.86;
+        this.vy *= 0.86;
+        this.x += this.vx * dt;
+        this.y += this.vy * dt;
+        this.bounceWalls(w);
+        for (const s of this.skills) s.cd = Math.max(0, s.cd - dt);
+        if (this.stun <= 0) {
+          this.speed = w.rand(this.spdMin, this.spdMax);
+          const sa = w.rand(0, TAU);
+          this.vx = Math.cos(sa) * this.speed;
+          this.vy = Math.sin(sa) * this.speed;
+        }
+        return;
+      }
       // —— 大招：2 秒内朝前方 30° 扇形疯狂扫射 ——
       if (this.ult > 0) {
         this.ult -= dt;
@@ -257,6 +277,32 @@
         this.thinkTimer = w.rand(0.25, 0.6);
         this.think();
       }
+
+      // 自动弹反：正前方有子弹飞来就立刻挥拍，不等 AI 决策
+      if (this.deflectCd > 0) this.deflectCd -= dt;
+      if (this.autoDeflect && this.deflectCd <= 0) {
+        const b = this.findIncomingBullet(w);
+        if (b) {
+          this.deflectCd = 0.4;
+          racketSwing(this, w, Math.atan2(b.y - this.y, b.x - this.x));
+        }
+      }
+    }
+
+    // 找一颗正朝我飞来的敌方子弹
+    findIncomingBullet(w) {
+      let best = null, bestD = 1e9;
+      for (const e of w.entities) {
+        if (e === this || e.owner === this) continue;
+        if (typeof e.dmg !== 'number' || typeof e.vx !== 'number') continue;
+        const d = dist(e, this);
+        if (d > 400 || d < 24) continue;
+        const toMe = Math.atan2(this.y - e.y, this.x - e.x);
+        const move = Math.atan2(e.vy, e.vx);
+        if (Math.abs(normAngle(toMe - move)) > 0.7) continue;   // 不是冲我来的
+        if (d < bestD) { bestD = d; best = e; }
+      }
+      return best;
     }
 
     bounceWalls(w) {
@@ -267,6 +313,15 @@
       if (this.y - this.r < a.y) { this.y = a.y + this.r; hy = 1; }
       if (this.y + this.r > a.y + a.h) { this.y = a.y + a.h - this.r; hy = -1; }
       if (!hx && !hy) return;
+
+      // 被击退时撞墙 → 眩晕
+      if (this.knock > 0) {
+        this.knock = 0;
+        this.stun = 1.0;
+        w.popText(this.x, this.y - 154, '眩晕!', '#ffe066', 32);
+        w.burst(this.x, this.y, '#ffe066', 18);
+        w.shake = Math.min(18, w.shake + 9);
+      }
 
       // 先随机偏转，再把法向速度强制指向场内 → 保证「弹得开、不会卡墙角」
       this.randomDeflect(w, 1);
@@ -365,6 +420,17 @@
         g.fillStyle = '#ffffff';
         g.beginPath(); g.ellipse(-this.face * 60, 30, 45, 16, 0, 0, TAU); g.fill();
         g.globalAlpha = 1;
+      }
+
+      // 眩晕：头顶转圈的小星星
+      if (this.stun > 0) {
+        for (let i = 0; i < 3; i++) {
+          const ang = this.age * 7 + i * (TAU / 3);
+          g.save();
+          g.translate(Math.cos(ang) * 46, -104 + Math.sin(ang) * 10);
+          drawStar(g, 0, 0, 12, '#ffe066');
+          g.restore();
+        }
       }
       g.restore();
     }
@@ -502,6 +568,68 @@
     w.shake = Math.min(w.shake + 7, 16);
     w.fx.push(new CastRing(f.x, f.y, 150, '#e5453f'));
     w.popText(f.x, f.y - 168, '大招·疯狂连发！', '#e5453f', 30);
+  }
+  // 五角星
+  function drawStar(g, cx, cy, r, color) {
+    g.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const rr = i % 2 === 0 ? r : r * 0.45;
+      const a = -Math.PI / 2 + i * Math.PI / 5;
+      const px = cx + Math.cos(a) * rr;
+      const py = cy + Math.sin(a) * rr;
+      i ? g.lineTo(px, py) : g.moveTo(px, py);
+    }
+    g.closePath();
+    g.fillStyle = color;
+    g.fill();
+    g.strokeStyle = 'rgba(120,80,0,.55)';
+    g.lineWidth = 2;
+    g.stroke();
+  }
+
+  // 角度归一化到 [-PI, PI]
+  function normAngle(a) {
+    while (a > Math.PI) a -= TAU;
+    while (a < -Math.PI) a += TAU;
+    return a;
+  }
+
+  // 网球拍挥击：扇形近战 + 反弹子弹 + 击退（技能与自动弹反共用）
+  function racketSwing(f, w, aimAng) {
+    const foe = w.enemyOf(f);
+    f.face = Math.cos(aimAng) >= 0 ? 1 : -1;
+    w.fx.push(new RacketSwing(f.x, f.y - 8, f.face));
+
+    // ① 反弹正面扇形内的敌方子弹
+    let reflected = 0;
+    for (const e of w.entities) {
+      if (e === f || e.owner === f) continue;
+      if (typeof e.dmg !== 'number' || typeof e.vx !== 'number') continue;
+      if (dist(e, f) > 410) continue;
+      if (Math.abs(normAngle(Math.atan2(e.y - f.y, e.x - f.x) - aimAng)) > 0.95) continue;
+      const back = (foe && foe.alive) ? Math.atan2(foe.y - e.y, foe.x - e.x) : aimAng;
+      const sp = Math.max(520, Math.hypot(e.vx, e.vy) * 1.25);
+      e.vx = Math.cos(back) * sp;
+      e.vy = Math.sin(back) * sp;
+      e.owner = f;
+      e.dmg = Math.round(e.dmg * 1.5);
+      reflected++;
+      w.burst(e.x, e.y, '#ffe066', 6);
+    }
+
+    // ② 扇形内的近战命中 + 击退
+    if (foe && foe.alive) {
+      const d2 = dist(f, foe);
+      if (d2 < 410 && Math.abs(normAngle(Math.atan2(foe.y - f.y, foe.x - f.x) - aimAng)) < 0.95) {
+        foe.takeDamage(96, 'attack');
+        const nx = (foe.x - f.x) / (d2 || 1);
+        const ny = (foe.y - f.y) / (d2 || 1);
+        foe.knockback(nx, ny, 1900);
+        w.shake = Math.min(16, w.shake + 7);
+      }
+    }
+    if (reflected > 0) w.popText(f.x, f.y - 150, '反弹 ×' + reflected, '#ffe066', 26);
+    return reflected;
   }
   /* ---------- 技能实体：合约仓位（股票技能） ---------- */
   class StockGem extends Entity {
@@ -898,42 +1026,7 @@
       canCast: (f, foe) => dist(f, foe) < 640,
       urge: (f, foe) => (dist(f, foe) < 480 ? 0.95 : 0.3),
       cast(f, foe, w) {
-        const aim = Math.atan2(foe.y - f.y, foe.x - f.x);
-        const dir = Math.cos(aim) >= 0 ? 1 : -1;
-        f.face = dir;
-        w.fx.push(new RacketSwing(f.x, f.y - 8, dir));
-
-        // ① 反弹正面扇形内的敌方子弹
-        let reflected = 0;
-        for (const e of w.entities) {
-          if (e === f || e.owner === f) continue;
-          if (typeof e.dmg !== 'number' || typeof e.vx !== 'number') continue;
-          const d = dist(e, f);
-          if (d > 410) continue;
-          let da = Math.atan2(e.y - f.y, e.x - f.x) - aim;
-          while (da > Math.PI) da -= TAU;
-          while (da < -Math.PI) da += TAU;
-          if (Math.abs(da) > 0.95) continue;          // 只在正面 ±54° 内
-          const back = Math.atan2(foe.y - e.y, foe.x - e.x);
-          const sp = Math.max(520, Math.hypot(e.vx, e.vy) * 1.25);
-          e.vx = Math.cos(back) * sp;
-          e.vy = Math.sin(back) * sp;
-          e.owner = f;
-          e.dmg = Math.round(e.dmg * 1.5);
-          reflected++;
-          w.burst(e.x, e.y, '#ffe066', 6);
-        }
-
-        // ② 近战命中 + 击退
-        const d2 = dist(f, foe);
-        if (d2 < 410) {
-          foe.takeDamage(96, 'attack');
-          const nx = (foe.x - f.x) / (d2 || 1);
-          const ny = (foe.y - f.y) / (d2 || 1);
-          foe.knockback(nx, ny, 1900);
-          w.shake = Math.min(16, w.shake + 7);
-        }
-        if (reflected > 0) w.popText(f.x, f.y - 150, '反弹 ×' + reflected, '#ffe066', 26);
+        racketSwing(f, w, Math.atan2(foe.y - f.y, foe.x - f.x));
       },
     },    // 治疗（新的效果原语：增益）
     heal: {
