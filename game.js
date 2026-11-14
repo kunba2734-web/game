@@ -222,7 +222,8 @@
         this.spinHitCd = Math.max(0, this.spinHitCd - dt);
         const tgt = w.enemyOf(this);
         if (tgt && tgt.alive && this.spinHitCd <= 0 && dist(this, tgt) < this.r + tgt.r + 10) {
-          const dmg = Math.round(14 + this.spin * 2.6);
+          // 转速 5 → 30 伤害，转速 26 → 164（上限比原来翻倍）
+          const dmg = Math.round(30 + (this.spin - this.spinMin) * 6.4);
           tgt.takeDamage(dmg, 'attack');
           const dd = dist(this, tgt) || 1;
           tgt.knockback((tgt.x - this.x) / dd, (tgt.y - this.y) / dd, 380);
