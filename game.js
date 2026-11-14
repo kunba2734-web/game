@@ -50,6 +50,11 @@
       height: 196,
       feetY: 86,
     },
+    tuberr: {
+      file: 'assets/tuberr.png',       // tuberr（钻石脸，会随转速旋转）
+      height: 200,
+      feetY: 88,
+    },
     muzzle: { x: 52, y: -22 },         // 炮口位置（朝右时相对角色中心），改这里对准新贴图的炮口
   };
 
@@ -94,6 +99,7 @@
   loadSprite('gatling', ART.gatling.file);
   loadSprite('pea', ART.pea.file);
   loadSprite('jiaoge', ART.jiaoge.file);
+  loadSprite('tuberr', ART.tuberr.file);
 
 
   // ======================= 1. 配置 =======================
@@ -178,6 +184,16 @@
       this.deflectCd = 0;     // 自动弹反的短冷却
       this.autoDeflect = this.skills.some(function (s) { return s.key === 'racket'; });
 
+      // 旋转体（tuberr）：转速越高伤害越高，撞人后掉速
+      this.spinner = !!def.spinner;
+      this.spin = this.spinner ? 6 : 0;
+      this.spinAngle = Math.random() * TAU;
+      this.spinMin = 5;
+      this.spinMax = 26;
+      this.spinGrow = 1.15;     // 每秒涨多少转速
+      this.spinHitCd = 0;
+      this.invuln = 0;          // 无敌剩余时间
+
       // 大招（机枪豌豆专用）：剩余时间 / 开火累加器 / 开火间隔
       this.ult = 0;
       this.ultAcc = 0;
@@ -196,6 +212,25 @@
       this.age += dt;
       this.hitFlash = Math.max(0, this.hitFlash - dt * 3);
       this.ammo.cur = Math.min(this.ammo.max, this.ammo.cur + this.ammo.regen * dt);
+
+      // —— 旋转体：转速随时间上升，接触造成伤害 ——
+      if (this.invuln > 0) this.invuln -= dt;
+      if (this.spinner) {
+        this.spin = Math.min(this.spinMax, this.spin + this.spinGrow * dt);
+        this.spinAngle += this.spin * dt;
+        this.spinHitCd = Math.max(0, this.spinHitCd - dt);
+        const tgt = w.enemyOf(this);
+        if (tgt && tgt.alive && this.spinHitCd <= 0 && dist(this, tgt) < this.r + tgt.r + 10) {
+          const dmg = Math.round(14 + this.spin * 2.6);
+          tgt.takeDamage(dmg, 'attack');
+          const dd = dist(this, tgt) || 1;
+          tgt.knockback((tgt.x - this.x) / dd, (tgt.y - this.y) / dd, 380);
+          w.shake = Math.min(16, w.shake + 5);
+          // 冲刺无敌期间撞人不掉速，正常旋转撞人才掉速
+          if (this.invuln <= 0) this.spin = Math.max(this.spinMin, this.spin * 0.45);
+          this.spinHitCd = 0.3;
+        }
+      }
 
       // —— 眩晕：不能移动、不能放技能 ——
       if (this.stun > 0) {
@@ -368,6 +403,10 @@
 
     takeDamage(amount, kind) {
       const w = this.world;
+      if (this.invuln > 0) {
+        w.popText(this.x, this.y - 150, '无敌', '#8ad8ff', 24);
+        return;
+      }
       amount = Math.max(0, amount);
       if (this.shield > 0) {
         const absorb = Math.min(this.shield, amount);
@@ -411,7 +450,7 @@
       g.save();
       g.scale(this.face, 1);
       if (this.hitFlash > 0) { g.shadowColor = 'rgba(255,255,255,.95)'; g.shadowBlur = 26 * this.hitFlash; }
-      this.def.draw(g, this.hitFlash);
+      this.def.draw(g, this);
       g.restore();
 
       // 冲刺拖尾
@@ -1028,6 +1067,21 @@
       cast(f, foe, w) {
         racketSwing(f, w, Math.atan2(foe.y - f.y, foe.x - f.x));
       },
+    },    // 冲刺：短距离突进，期间无敌；冲刺撞人不掉转速
+    dash: {
+      name: '冲刺', color: '#8ad8ff', cd: 3.6,
+      canCast: (f, foe) => { const d = dist(f, foe); return d > 110 && d < 620; },
+      urge: (f, foe) => (dist(f, foe) < 420 ? 0.7 : 0.25),
+      cast(f, foe, w) {
+        const ang = Math.atan2(foe.y - f.y, foe.x - f.x);
+        f.vx = Math.cos(ang) * 900;
+        f.vy = Math.sin(ang) * 900;
+        f.face = Math.cos(ang) >= 0 ? 1 : -1;
+        f.invuln = 0.34;
+        f.dash = { t: 0.34, hit: false };
+        w.fx.push(new CastRing(f.x, f.y, 76, '#8ad8ff'));
+        w.burst(f.x, f.y, '#bfe9ff', 8);
+      },
     },    // 治疗（新的效果原语：增益）
     heal: {
       name: '回血', color: '#4fa85c', cd: 10,
@@ -1070,6 +1124,12 @@
       name: '叫哥', hpBonus: 140, speedBonus: -12,
       skills: ['racket', 'shield'],
       draw(g) { drawJiaoge(g); },
+    },
+    tuberr: {
+      name: 'tuberr', hpBonus: 60, speedBonus: -6,
+      spinner: true,
+      skills: ['dash', 'shield'],
+      draw(g, f) { drawTuberr(g, f); },
     },
   });
 
@@ -1271,6 +1331,7 @@
     // 角色下方不再显示名字（名字统一放在顶部“A vs B”标题里），只保留技能状态
     const chips = f.skills.map((s) => ({ s: s, wd: s.def.ammo ? 108 : 62 }));
     if (f.ult > 0) chips.push({ ult: true, wd: 100 });
+    if (f.spinner) chips.push({ spin: true, wd: 96 });
     const gap = 8;
     const total = chips.reduce((a, c) => a + c.wd, 0) + gap * (chips.length - 1);
     const y = f.y + 116;
@@ -1279,6 +1340,17 @@
     g.save();
     g.textAlign = 'center';
     for (const c of chips) {
+      if (c.spin) {
+        const k = Math.min(1, (f.spin - f.spinMin) / (f.spinMax - f.spinMin));
+        g.fillStyle = k > 0.66 ? '#ff9a3c' : (k > 0.33 ? '#ffd94a' : 'rgba(138,216,255,.95)');
+        roundRect(g, x, y - 13, c.wd, 26, 7);
+        g.fill();
+        g.font = '800 14px "Microsoft YaHei",sans-serif';
+        g.fillStyle = '#0f2b3a';
+        g.fillText('转速 ' + (f.spin / f.spinMin).toFixed(1) + '×', x + c.wd / 2, y + 5);
+        x += c.wd + gap;
+        continue;
+      }
       if (c.ult) {
         g.fillStyle = '#e5453f';
         roundRect(g, x, y - 13, c.wd, 26, 7);
@@ -1490,6 +1562,37 @@
       g.beginPath(); g.arc(0, -42, 30, 0, TAU); g.fill();
     }
   }
+  // tuberr：钻石脸，随转速旋转（原图正面，不需要镜像）
+  function drawTuberr(g, f) {
+    const im = IMG.tuberr;
+    const H = ART.tuberr.height;
+    const ang = f && typeof f.spinAngle === 'number' ? f.spinAngle : 0;
+    if (im && im.complete && im.naturalWidth) {
+      const w2 = im.naturalWidth * (H / im.naturalHeight);
+      g.save();
+      g.translate(0, ART.tuberr.feetY - H / 2 - 10);
+      g.rotate(ang);
+      g.drawImage(im, -w2 / 2, -H / 2, w2, H);
+      g.restore();
+      // 转速越快，外圈光晕越亮
+      if (f && f.spinner) {
+        const k = Math.min(1, (f.spin - f.spinMin) / (f.spinMax - f.spinMin));
+        g.save();
+        g.globalAlpha = 0.25 + k * 0.45;
+        g.strokeStyle = '#8ad8ff';
+        g.lineWidth = 4 + k * 6;
+        g.beginPath();
+        g.arc(0, ART.tuberr.feetY - H / 2 - 10, H * 0.46, ang * 1.6, ang * 1.6 + Math.PI * 1.3);
+        g.stroke();
+        g.restore();
+      }
+    } else {
+      g.fillStyle = '#7fb8ff';
+      g.beginPath();
+      g.moveTo(0, -96); g.lineTo(70, 0); g.lineTo(0, 96); g.lineTo(-70, 0);
+      g.closePath(); g.fill();
+    }
+  }
   // ======================= 7. 界面流程 / 主循环 =======================
   const cv = document.getElementById('game');
   const ctx = cv.getContext('2d');
@@ -1506,7 +1609,7 @@
   const slotAEl = document.getElementById('slotA');
   const slotBEl = document.getElementById('slotB');
 
-  const ORDER = ['penguin', 'cat', 'rabbit', 'gatling', 'jiaoge'];
+  const ORDER = ['penguin', 'cat', 'rabbit', 'gatling', 'jiaoge', 'tuberr'];
   const selection = { a: 'penguin', b: 'rabbit' };
   let activeSlot = 'a';
   let screen = 'menu';            // menu | select | battle
@@ -1593,7 +1696,7 @@
   }
 
   // ---------- 加载页：贴图没就绪就不进场 ----------
-  const spritesNeeded = ['gatling', 'pea', 'jiaoge'];
+  const spritesNeeded = ['gatling', 'pea', 'jiaoge', 'tuberr'];
   let pendingBattle = false;
   let loadTimer = null;
 
