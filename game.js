@@ -112,6 +112,7 @@
     speed: { min: 130, max: 300 },              // 角色速度区间
     jitter: [0.10, 0.32],                       // 撞墙后随机偏转角(rad)
     startHp: 1200,
+    dmgMul: 1.6,                                // 全局伤害倍率（所有角色一起加强）
   };
 
   const COLOR = {
@@ -403,6 +404,7 @@
 
     takeDamage(amount, kind) {
       const w = this.world;
+      amount = amount * (CFG.dmgMul || 1);
       if (this.invuln > 0) {
         w.popText(this.x, this.y - 150, '无敌', '#8ad8ff', 24);
         return;
@@ -998,7 +1000,7 @@
     // —— 增益：护盾 ——
     shield: {
       name: '护盾', color: '#8ad8ff', cd: 9,
-      cast(f) { f.shield = 220; },
+      cast(f) { f.shield = 300; },
       canCast: (f) => f.shield <= 0,
       urge: (f, foe, w) => (f.hp < f.maxHp * 0.55 ? 0.9 : 0.2),
     },
@@ -1266,7 +1268,7 @@
       for (const e of this.entities) e.draw(g);
       for (const e of this.fx) e.draw(g);
       // 血条/名牌单独一层，永远压在角色与特效之上
-      for (const f of this.fighters) drawHpPlaque(g, f.x, Math.max(200, f.y - 138), f.hp, f.maxHp);
+      for (const f of this.fighters) drawHpPlaque(g, f, f.x, Math.max(200, f.y - 138));
       for (const f of this.fighters) drawNamePlate(g, f);
 
       // 炮口对位辅助：控制台执行 window.__DEBUG_MUZZLE = 1 即可看到十字
@@ -1295,7 +1297,26 @@
 
   // ======================= 6. 绘制：通用 UI =======================
   // 白色框本身就是血条：宽度随血量收缩，数字始终居中
-  function drawHpPlaque(g, x, y, hp, maxHp) {
+  // 小盾牌图标
+  function drawShieldIcon(g, cx, cy, r) {
+    g.save();
+    g.beginPath();
+    g.moveTo(cx, cy - r);
+    g.lineTo(cx + r * 0.85, cy - r * 0.55);
+    g.lineTo(cx + r * 0.85, cy + r * 0.15);
+    g.quadraticCurveTo(cx, cy + r * 1.05, cx - r * 0.85, cy + r * 0.15);
+    g.lineTo(cx - r * 0.85, cy - r * 0.55);
+    g.closePath();
+    g.fillStyle = '#eaf6ff';
+    g.fill();
+    g.strokeStyle = '#1b5e88';
+    g.lineWidth = 2;
+    g.stroke();
+    g.restore();
+  }
+
+  function drawHpPlaque(g, f, x, y) {
+    const hp = f.hp, maxHp = f.maxHp;
     const pct = clamp(hp / maxHp, 0, 1);
     const low = pct < 0.35;
     const wMax = 190, h = 40, r = 11;
@@ -1325,7 +1346,54 @@
     g.fillStyle = low ? '#e5453f' : COLOR.ink;
     g.fillText(Math.round(hp), x, y + 1);
 
+    // —— 护盾值：贴在血条右侧 ——
+    if (f.shield > 0) {
+      const label = String(Math.round(f.shield));
+      g.font = '800 19px "Microsoft YaHei",sans-serif';
+      const tw = g.measureText(label).width;
+      const bw = tw + 44;
+      let bx = x + wMax / 2 + 8;            // 血条右端外侧
+      if (bx + bw > CFG.W - 10) bx = x - wMax / 2 - 8 - bw;   // 贴右墙时改放左边
+      const bh = 30;
+      // 背板
+      g.fillStyle = 'rgba(47,143,208,.95)';
+      g.strokeStyle = 'rgba(255,255,255,.85)';
+      g.lineWidth = 2;
+      roundRect(g, bx, y - bh / 2, bw, bh, 9);
+      g.fill();
+      g.stroke();
+      // 盾牌图标
+      g.save();
+      g.translate(bx + 15, y);
+      drawShieldShape(g, 9);
+      g.restore();
+      // 数值
+      g.textAlign = 'left';
+      g.textBaseline = 'middle';
+      g.lineWidth = 4;
+      g.strokeStyle = 'rgba(10,40,60,.35)';
+      g.strokeText(label, bx + 28, y + 1);
+      g.fillStyle = '#ffffff';
+      g.fillText(label, bx + 28, y + 1);
+    }
+
     g.restore();
+  }
+
+  // 以 (0,0) 为中心画一个盾形图标
+  function drawShieldShape(g, r) {
+    g.beginPath();
+    g.moveTo(0, -r);
+    g.lineTo(r * 0.85, -r * 0.55);
+    g.lineTo(r * 0.85, r * 0.15);
+    g.quadraticCurveTo(0, r * 1.1, -r * 0.85, r * 0.15);
+    g.lineTo(-r * 0.85, -r * 0.55);
+    g.closePath();
+    g.fillStyle = '#eaf6ff';
+    g.fill();
+    g.strokeStyle = '#1b5e88';
+    g.lineWidth = 2;
+    g.stroke();
   }
   function drawNamePlate(g, f) {
     // 角色下方不再显示名字（名字统一放在顶部“A vs B”标题里），只保留技能状态
