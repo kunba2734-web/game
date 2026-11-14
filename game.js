@@ -45,6 +45,11 @@
       file: 'assets/pea.png',          // 子弹贴图
       scale: 1.0,                      // 子弹出图大小倍率
     },
+    jiaoge: {
+      file: 'assets/jiaoge.png',       // 叫哥（原图朝左，绘制时会镜像）
+      height: 196,
+      feetY: 86,
+    },
     muzzle: { x: 52, y: -22 },         // 炮口位置（朝右时相对角色中心），改这里对准新贴图的炮口
   };
 
@@ -88,6 +93,7 @@
 
   loadSprite('gatling', ART.gatling.file);
   loadSprite('pea', ART.pea.file);
+  loadSprite('jiaoge', ART.jiaoge.file);
 
 
   // ======================= 1. 配置 =======================
@@ -166,6 +172,9 @@
       // AI 施法节流
       this.thinkTimer = world.rand(0.3, 1.0);
 
+      // 被击退：短时间保持高速度，结束后恢复正常速度
+      this.knock = 0;
+
       // 大招（机枪豌豆专用）：剩余时间 / 开火累加器 / 开火间隔
       this.ult = 0;
       this.ultAcc = 0;
@@ -229,6 +238,15 @@
       this.x += this.vx * dt;
       this.y += this.vy * dt;
       this.bounceWalls(w);
+      if (this.knock > 0) {
+        this.knock -= dt;
+        if (this.knock <= 0) {
+          this.speed = w.rand(this.spdMin, this.spdMax);
+          const ka = Math.atan2(this.vy, this.vx);
+          this.vx = Math.cos(ka) * this.speed;
+          this.vy = Math.sin(ka) * this.speed;
+        }
+      }
       if (Math.abs(this.vx) > 8) this.face = this.vx > 0 ? 1 : -1;
 
       // --- 技能冷却 & AI 决策 ---
@@ -308,6 +326,12 @@
       w.popText(this.x + w.rand(-24, 24), this.y - 120, '-' + Math.round(amount), kind === 'self' ? COLOR.green : COLOR.red, 26 + Math.min(22, amount / 6));
       w.burst(this.x, this.y, kind === 'self' ? COLOR.green : COLOR.red, 10);
       if (this.hp <= 0) w.onDeath(this);
+    }
+
+    knockback(nx, ny, power) {
+      this.vx = nx * power;
+      this.vy = ny * power;
+      this.knock = 0.32;
     }
 
     heal(amount) {
@@ -592,6 +616,58 @@
     }
   }
 
+  /* ---------- 表现：网球拍挥击（扇形） ---------- */
+  class RacketSwing extends Entity {
+    constructor(x, y, dir) {
+      super();
+      this.x = x; this.y = y;
+      this.dir = dir;
+      this.life = 0.3;
+      this.t = 0;
+    }
+    update(dt) { this.t += dt; if (this.t >= this.life) this.dead = true; }
+    draw(g) {
+      const k = Math.min(1, this.t / this.life);
+      const from = -0.95, to = -0.95 + 1.9 * Math.min(1, k * 1.7);
+      g.save();
+      g.translate(this.x, this.y);
+      g.scale(this.dir, 1);
+
+      // 扇形范围提示
+      g.globalAlpha = 0.22 * (1 - k);
+      g.fillStyle = '#ffd94a';
+      g.beginPath(); g.moveTo(0, 0); g.arc(0, 0, 200, -0.95, 0.95); g.closePath(); g.fill();
+
+      // 挥拍残影
+      g.globalAlpha = (1 - k) * 0.9;
+      g.strokeStyle = '#ffffff';
+      g.lineWidth = 9;
+      g.lineCap = 'round';
+      g.beginPath(); g.arc(0, 0, 118, -0.95, to); g.stroke();
+
+      // 球拍
+      g.globalAlpha = 1 - k * 0.6;
+      g.save();
+      g.rotate(to);
+      g.translate(118, 0);
+      g.rotate(-0.35);
+      g.strokeStyle = '#1b2a3a';
+      g.lineWidth = 7;
+      g.beginPath(); g.moveTo(-64, 0); g.lineTo(-26, 0); g.stroke();
+      g.fillStyle = '#2f6fd0';
+      g.strokeStyle = '#eaf2ff';
+      g.lineWidth = 4;
+      g.beginPath(); g.ellipse(0, 0, 30, 22, 0, 0, TAU); g.fill(); g.stroke();
+      g.strokeStyle = 'rgba(255,255,255,.75)';
+      g.lineWidth = 1.5;
+      for (let i = -2; i <= 2; i++) {
+        g.beginPath(); g.moveTo(i * 10, -18); g.lineTo(i * 10, 18); g.stroke();
+        g.beginPath(); g.moveTo(-25, i * 7); g.lineTo(25, i * 7); g.stroke();
+      }
+      g.restore();
+      g.restore();
+    }
+  }
   /* ---------- 多段近战：连爪 ---------- */
   class MultiStrike extends Entity {
     constructor(owner, target, hits, dmg, interval, range, color) {
@@ -815,6 +891,49 @@
         f.burst = 3;        // 剩下 3 发排队，按 burstTick 间隔依次射出
         f.burstAcc = 0;
       },
+    },    // 网球拍挥击：正面扇形近战，能反弹对手子弹，命中击退
+    racket: {
+      name: '挥拍', color: '#ffd94a', cd: 2.3,
+      canCast: (f, foe) => dist(f, foe) < 320,
+      urge: (f, foe) => (dist(f, foe) < 250 ? 0.95 : 0.3),
+      cast(f, foe, w) {
+        const aim = Math.atan2(foe.y - f.y, foe.x - f.x);
+        const dir = Math.cos(aim) >= 0 ? 1 : -1;
+        f.face = dir;
+        w.fx.push(new RacketSwing(f.x, f.y - 8, dir));
+
+        // ① 反弹正面扇形内的敌方子弹
+        let reflected = 0;
+        for (const e of w.entities) {
+          if (e === f || e.owner === f) continue;
+          if (typeof e.dmg !== 'number' || typeof e.vx !== 'number') continue;
+          const d = dist(e, f);
+          if (d > 235) continue;
+          let da = Math.atan2(e.y - f.y, e.x - f.x) - aim;
+          while (da > Math.PI) da -= TAU;
+          while (da < -Math.PI) da += TAU;
+          if (Math.abs(da) > 0.95) continue;          // 只在正面 ±54° 内
+          const back = Math.atan2(foe.y - e.y, foe.x - e.x);
+          const sp = Math.max(520, Math.hypot(e.vx, e.vy) * 1.25);
+          e.vx = Math.cos(back) * sp;
+          e.vy = Math.sin(back) * sp;
+          e.owner = f;
+          e.dmg = Math.round(e.dmg * 1.2);
+          reflected++;
+          w.burst(e.x, e.y, '#ffe066', 6);
+        }
+
+        // ② 近战命中 + 击退
+        const d2 = dist(f, foe);
+        if (d2 < 205) {
+          foe.takeDamage(52, 'attack');
+          const nx = (foe.x - f.x) / (d2 || 1);
+          const ny = (foe.y - f.y) / (d2 || 1);
+          foe.knockback(nx, ny, 900);
+          w.shake = Math.min(16, w.shake + 7);
+        }
+        if (reflected > 0) w.popText(f.x, f.y - 150, '反弹 ×' + reflected, '#ffe066', 26);
+      },
     },    // 治疗（新的效果原语：增益）
     heal: {
       name: '回血', color: '#4fa85c', cd: 10,
@@ -852,6 +971,11 @@
       name: '超级机枪豌豆射手', hpBonus: -60, speedBonus: -26,
       skills: ['peaShot', 'shield'],
       draw(g) { drawGatling(g); },
+    },
+    jiaoge: {
+      name: '叫哥', hpBonus: 140, speedBonus: -12,
+      skills: ['racket', 'shield'],
+      draw(g) { drawJiaoge(g); },
     },
   });
 
@@ -1255,6 +1379,23 @@
       g.beginPath(); g.arc(13, -16, 4, 0, TAU); g.fill();
     }
   }
+  // 叫哥：原图朝左，所以绘制时先水平镜像，配合外层 face 翻转正好正确
+  function drawJiaoge(g) {
+    const im = IMG.jiaoge;
+    const H = ART.jiaoge.height;
+    if (im && im.complete && im.naturalWidth) {
+      const w2 = im.naturalWidth * (H / im.naturalHeight);
+      g.save();
+      g.scale(-1, 1);
+      g.drawImage(im, -w2 / 2, ART.jiaoge.feetY - H, w2, H);
+      g.restore();
+    } else {
+      g.fillStyle = '#3b5ea8';
+      g.beginPath(); g.ellipse(0, 20, 44, 58, 0, 0, TAU); g.fill();
+      g.fillStyle = '#f0d0b0';
+      g.beginPath(); g.arc(0, -42, 30, 0, TAU); g.fill();
+    }
+  }
   // ======================= 7. 界面流程 / 主循环 =======================
   const cv = document.getElementById('game');
   const ctx = cv.getContext('2d');
@@ -1271,7 +1412,7 @@
   const slotAEl = document.getElementById('slotA');
   const slotBEl = document.getElementById('slotB');
 
-  const ORDER = ['penguin', 'cat', 'rabbit', 'gatling'];
+  const ORDER = ['penguin', 'cat', 'rabbit', 'gatling', 'jiaoge'];
   const selection = { a: 'penguin', b: 'rabbit' };
   let activeSlot = 'a';
   let screen = 'menu';            // menu | select | battle
@@ -1358,7 +1499,7 @@
   }
 
   // ---------- 加载页：贴图没就绪就不进场 ----------
-  const spritesNeeded = ['gatling', 'pea'];
+  const spritesNeeded = ['gatling', 'pea', 'jiaoge'];
   let pendingBattle = false;
   let loadTimer = null;
 
